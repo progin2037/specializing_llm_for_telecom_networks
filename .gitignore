@@ -1,0 +1,13 @@
+#Data formats
+*.csv
+*.pkl
+
+#Documents
+*.docx
+*.txt
+!requirements.txt
+
+#Python
+*.pyc
+.idea
+*.ipynb_checkpoints
