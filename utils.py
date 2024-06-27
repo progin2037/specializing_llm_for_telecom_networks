@@ -1,7 +1,25 @@
 import pandas as pd
+import re
 from pathlib import Path
+from tqdm import tqdm
 from transformers.models.phi.modeling_phi import PhiForCausalLM
 from transformers.models.codegen.tokenization_codegen_fast import CodeGenTokenizerFast
+from peft.peft_model import PeftModelForCausalLM
+
+
+def remove_release_number(data: pd.DataFrame,
+                          column: str) -> pd.DataFrame:
+    """
+    Remove [3GPP Release <number>] from question.
+
+    Args:
+        data (pd.DataFrame):  A DataFrame with data about questions and their options
+        column (str): A column name to remove release number from
+    Returns:
+        data (pd.DataFrame): A DataFrame with removed release number
+    """
+    data[column] = [re.findall('(.*?)(?:\s+\[3GPP Release \d+]|$)', x)[0] for x in data[column]]
+    return data
 
 
 def get_option_5(row: pd.Series) -> str:
@@ -21,22 +39,28 @@ def get_option_5(row: pd.Series) -> str:
     return option_5
 
 
-def encode_answer(answer: str) -> int:
+def encode_answer(answer: str | int,
+                  encode_letter: bool = True) -> int | str:
     """
-    Encode letter to corresponding number.
+    Encode letter to corresponding number or number to letter.
 
     Args:
-        answer (str): Chosen answer (A/B/C/D or E)
+        answer (str): Chosen answer (A/B/C/D/E or 1/2/3/4/5)
+        encode_letter (bool) Encode letter to number (True) or number to letter (False). Defaults to True
     Returns:
-        number (int): Number corresponding to the chosen answer
+        number (int | str): Number (letter) corresponding to the chosen answer
     """
     letter_to_number = {'A': 1,
                         'B': 2,
                         'C': 3,
                         'D': 4,
                         'E': 5}
-    number = letter_to_number[answer]
-    return number
+    if encode_letter:
+        encoded = letter_to_number[answer]
+    else:
+        number_to_letter = {y: x for x, y in letter_to_number.items()}
+        encoded = number_to_letter[answer]
+    return encoded
 
 
 def generate_prompt(row: pd.Series) -> str:
@@ -62,16 +86,16 @@ def generate_prompt(row: pd.Series) -> str:
 
 
 def llm_inference(data: pd.DataFrame,
-                  model: PhiForCausalLM,
+                  model: PhiForCausalLM | PeftModelForCausalLM,
                   tokenizer: CodeGenTokenizerFast,
-                  show_prompts=False,
-                  store_wrong=False) -> tuple[pd.DataFrame, list]:
+                  show_prompts: bool = False,
+                  store_wrong: bool = False) -> tuple[pd.DataFrame, list]:
     """
     Perform LLM inference.
 
     Args:
         data (pd.DataFrame): A DataFrame with data about questions and their options
-        model (PhiForCausalLM): Model used for inference
+        model (PhiForCausalLM | PeftModelForCausalLM): Model used for inference
         tokenizer (CodeGenTokenizerFast): Model tokenizer
         show_prompts (bool): Show all generated prompts (True) or not (False). Defaults to False.
         store_wrong (bool): Store questions with not allowed answers (True) or not (False). Defaults to False
@@ -82,10 +106,10 @@ def llm_inference(data: pd.DataFrame,
     answers = []
     wrong_format = []
     # Iterate over different rows
-    for _, question in data.iterrows():
+    for _, question in tqdm(data.iterrows()):
         prompt = generate_prompt(question)
         if show_prompts:
-            print(f"\n{question['question_id']}")
+            print(f"\n{question['Question_ID']}")
             print(prompt)
         inputs = tokenizer(prompt, return_tensors="pt", return_attention_mask=False)
         # Generate only one new character. It should be our answer
@@ -95,14 +119,47 @@ def llm_inference(data: pd.DataFrame,
         try:
             answer = encode_answer(answer_letter)
         except:
-            print(f"Question {question['question_id']} output was improper ({answer_letter})! Changing answer to 1...")
+            print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Changing answer to 1...")
             answer = 1
+            # Generate more characters to check what is created with the model
+            outputs = model.generate(**inputs, max_length=inputs[0].__len__()+20, pad_token_id=tokenizer.eos_token_id)
+            answer_letter = tokenizer.batch_decode(outputs)[0]
+            print(answer_letter)
             if store_wrong:
-                wrong_format.append([question['question_id'], answer_letter])
-        answers.append([question['question_id'], answer])
+                wrong_format.append([question['Question_ID'], answer_letter])
+        answers.append([question['Question_ID'], answer])
     # Create a DataFrame with answers
     answers = pd.DataFrame(answers, columns=['Question_ID', 'Answer_ID'])
     return answers, wrong_format
+
+
+def get_results_with_labels(results_df,
+                            labels_df) -> tuple[pd.DataFrame, float]:
+    """
+    Merge results with ground truth labels.
+
+    Args:
+        results_df (pd.DataFrame): Inference results
+        labels_df (pd.DataFrame): Ground truth labels
+    Returns:
+        results_labels (pd.DataFrame): Merged results with labels
+        train_acc (float): Model accuracy
+    """
+    # Change column name to be compatible with labels
+    results_df.rename({'Answer_ID': 'Prediction_ID'}, axis=1, inplace=True)
+    # Remove empty columns from labels
+    labels_df = labels_df[['Question_ID', 'Answer_ID']]
+    # Transform question ID column to the same format as in labels
+    results_df['Question_ID'] = results_df['Question_ID'].astype('int')
+    # Merge columns
+    results_labels = pd.merge(labels_df,
+                              results_df,
+                              how='left',
+                              on='Question_ID')
+    # Get accuracy of predictions
+    train_acc = 100 * (results_labels['Answer_ID'] == results_labels['Prediction_ID']).sum() / len(results_labels)
+    print(f'Train accuracy: {train_acc}%')
+    return results_labels, train_acc
 
 
 def create_empty_directory(path: str):
