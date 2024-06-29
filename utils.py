@@ -1,6 +1,8 @@
 import pandas as pd
 import re
 from pathlib import Path
+import os
+import shutil
 from tqdm import tqdm
 from transformers.models.phi.modeling_phi import PhiForCausalLM
 from transformers.models.codegen.tokenization_codegen_fast import CodeGenTokenizerFast
@@ -171,3 +173,31 @@ def create_empty_directory(path: str):
     """
     models_path = Path(path)
     models_path.mkdir(parents=True, exist_ok=True)
+
+
+def create_dir_with_sampled_docs(docs_path: str,
+                                 sampled_docs_path: str,
+                                 sample_frac: float,
+                                 create_new: bool = True):
+    """
+    Create a new directory with sampled documents.
+
+    Args:
+        docs_path (str): Documents directory
+        sampled_docs_path (str): New directory to store copied documents
+        sample_frac (float): Fraction of documents to store with (0, 1> range
+        create_new (bool): Remove all files from the directory if it already exists (True) or not (False)
+    """
+    # Remove files if directory already exists
+    if create_new:
+        if os.path.exists(sampled_docs_path):
+            shutil.rmtree(sampled_docs_path)
+    # Create sampled_docs_path directory if it doesn't exist
+    create_empty_directory(sampled_docs_path)
+    # Get all documents from docs_path
+    dir_list = os.listdir(docs_path)
+    # Sample documents
+    sampled_docs = pd.Series(dir_list).sample(frac=sample_frac, random_state=22)
+    # Copy files
+    for file_name in sampled_docs:
+        shutil.copy(f'{docs_path}/{file_name}', f'{sampled_docs_path}')
