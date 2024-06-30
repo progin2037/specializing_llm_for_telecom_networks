@@ -18,11 +18,12 @@ def tokenize_function(examples: datasets.arrow_dataset.Dataset):
     Returns:
         tokenized_dataset (datasets.arrow_dataset.Dataset): Tokenized dataset
     """
-    return tokenizer(examples["text"], max_length=512, padding="max_length", truncation=True)
+    return tokenizer(examples['text'], max_length=512, padding='max_length', truncation=True)
 
 
 MODEL_PATH = 'microsoft/phi-2'
 TUNED_MODEL_PATH = 'models/peft_phi_2'
+USE_RAG = True
 
 # Config to load model with a 4-bit quantization
 bnb_config = BitsAndBytesConfig(load_in_4bit=True,
@@ -51,11 +52,16 @@ train = pd.merge(train,
                  on='Question_ID')
 # Transform answer to a desired format (e.g. B) Full question answer)
 train['answer'] = train.Answer_letter + ')' + train.answer.str[9:]
-
 # Remove [3GPP Release <number>] from question
 train = remove_release_number(train, 'question')
-# Generate prompts with answers
-train['text'] = train.apply(lambda x: generate_prompt(x) + x['answer'], axis=1)
+if USE_RAG:
+    context_all_train = pd.read_pickle('results/context_all_train.pkl')
+    train['Context_1'] = context_all_train['Context_1']  ## add more Context_x columns if using many chunks
+    # Generate prompts with context and answers
+    train['text'] = train.apply(lambda x: generate_prompt(x, 'Context:\n' + x['Context_1'] + '\n') + x['answer'], axis=1)
+else:
+    # Generate prompts with answers
+    train['text'] = train.apply(lambda x: generate_prompt(x) + x['answer'], axis=1)
 # Get train split (70%)
 instruction_dataset = train['text'].sample(frac=0.7, random_state=22)
 # Get test indices (remaining 30%). They will be used at the end to evaluate results
@@ -77,14 +83,15 @@ peft_config = LoraConfig(task_type="CAUSAL_LM",
                          lora_dropout=0.05)
 peft_model = get_peft_model(model, peft_config)
 # Set training arguments, data collator for LLMs and Trainer
-training_args = TrainingArguments(output_dir="results/lora_model",
+training_args = TrainingArguments(output_dir=TUNED_MODEL_PATH,
                                   learning_rate=1e-3,
                                   per_device_train_batch_size=8,  # reduce if running into out-of-memory issues
                                   num_train_epochs=3,  # reduce if running into out-of-memory issues
                                   weight_decay=0.01,
-                                  eval_strategy="epoch",
+                                  eval_strategy='epoch',
                                   logging_steps=20,
-                                  fp16=True)
+                                  fp16=True,
+                                  save_strategy='no')
 data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 trainer = Trainer(model=peft_model,
                   args=training_args,
