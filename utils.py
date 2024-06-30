@@ -7,6 +7,7 @@ from tqdm import tqdm
 from transformers.models.phi.modeling_phi import PhiForCausalLM
 from transformers.models.codegen.tokenization_codegen_fast import CodeGenTokenizerFast
 from peft.peft_model import PeftModelForCausalLM
+from llama_index.core.query_engine.retriever_query_engine import RetrieverQueryEngine
 
 
 def remove_release_number(data: pd.DataFrame,
@@ -65,12 +66,33 @@ def encode_answer(answer: str | int,
     return encoded
 
 
-def generate_prompt(row: pd.Series) -> str:
+def rag(row,
+        query_eng,
+        top_k):
+    # Query documents
+    query = row['question']
+    response = query_eng.query(query)
+    context = 'Context:\n'
+    for i in range(top_k):
+        try:
+            context = context + response.source_nodes[i].text + '\n'
+        except:
+            # Add empty string in context if none of the chunks was matched
+            if i == 0:
+                context = ''
+    # Remove unnecessary spaces
+    context = re.sub('\s+', ' ', context)
+    return context
+
+
+def generate_prompt(row: pd.Series,
+                    context: str) -> str:
     """
     Generate prompt for the given row. The prompt template is already created.
 
     Args:
         row (pd.Series): A row with question and options to choose from
+        context (str): Output from RAG (empty if no RAG used)
     Returns:
         prompt (str): Generated prompt
     """
@@ -82,6 +104,7 @@ def generate_prompt(row: pd.Series) -> str:
     C) {row['option 3']}
     D) {row['option 4']}
     {get_option_5(row)}
+    {context}
     Answer:
     """
     return prompt
@@ -90,6 +113,9 @@ def generate_prompt(row: pd.Series) -> str:
 def llm_inference(data: pd.DataFrame,
                   model: PhiForCausalLM | PeftModelForCausalLM,
                   tokenizer: CodeGenTokenizerFast,
+                  perform_rag: bool = False,
+                  query_eng: RetrieverQueryEngine = None,
+                  top_k: int = 0,
                   show_prompts: bool = False,
                   store_wrong: bool = False) -> tuple[pd.DataFrame, list]:
     """
@@ -99,7 +125,10 @@ def llm_inference(data: pd.DataFrame,
         data (pd.DataFrame): A DataFrame with data about questions and their options
         model (PhiForCausalLM | PeftModelForCausalLM): Model used for inference
         tokenizer (CodeGenTokenizerFast): Model tokenizer
-        show_prompts (bool): Show all generated prompts (True) or not (False). Defaults to False.
+        perform_rag (bool): Use context from RAG in prompt (True) or not (False). Defaults to False
+        query_eng (RetrieverQueryEngine): RAG query engine. Defaults to None
+        top_k (int): Number of chunks in context from RAG. Defaults to 0
+        show_prompts (bool): Show all generated prompts (True) or not (False). Defaults to False
         store_wrong (bool): Store questions with not allowed answers (True) or not (False). Defaults to False
     Returns:
         answers (pd.DataFrame): A DataFrame with question IDs and answer IDs
@@ -109,7 +138,13 @@ def llm_inference(data: pd.DataFrame,
     wrong_format = []
     # Iterate over different rows
     for _, question in tqdm(data.iterrows()):
-        prompt = generate_prompt(question)
+        if perform_rag:
+            prompt_context = rag(question,
+                                 query_eng,
+                                 top_k)
+        else:
+            prompt_context = ''
+        prompt = generate_prompt(question, prompt_context)
         if show_prompts:
             print(f"\n{question['Question_ID']}")
             print(prompt)
@@ -121,14 +156,25 @@ def llm_inference(data: pd.DataFrame,
         try:
             answer = encode_answer(answer_letter)
         except:
-            print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Changing answer to 1...")
-            answer = 1
-            # Generate more characters to check what is created with the model
-            outputs = model.generate(**inputs, max_length=inputs[0].__len__()+20, pad_token_id=tokenizer.eos_token_id)
-            answer_letter = tokenizer.batch_decode(outputs)[0]
-            print(answer_letter)
-            if store_wrong:
-                wrong_format.append([question['Question_ID'], answer_letter])
+            try:
+                print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Checking if it wasn't\
+because of spaces...")
+                outputs = model.generate(**inputs, max_length=inputs[0].__len__()+4, pad_token_id=tokenizer.eos_token_id)
+                print(f'Full output:\n{tokenizer.batch_decode(outputs)[0]}')
+                answer_letter = tokenizer.batch_decode(outputs)[0][len(prompt)-5:len(prompt)+5]
+                print(f'New answer: {answer_letter}')
+                answer_letter = re.findall('(A|B|C|D|E)\)', answer_letter)[0]
+                answer = encode_answer(answer_letter)
+                print(f'Changed answer to {answer}')
+            except:
+                print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Changing answer to 1")
+                answer = 1
+                # Generate more characters to check what is created with the model
+                outputs = model.generate(**inputs, max_length=inputs[0].__len__()+20, pad_token_id=tokenizer.eos_token_id)
+                answer_letter = tokenizer.batch_decode(outputs)[0]
+                print(answer_letter)
+                if store_wrong:
+                    wrong_format.append([question['Question_ID'], answer_letter])
         answers.append([question['Question_ID'], answer])
     # Create a DataFrame with answers
     answers = pd.DataFrame(answers, columns=['Question_ID', 'Answer_ID'])
