@@ -12,6 +12,7 @@ The solution was created using Python version 3.10.13 on Windows 11.
 3. Download data
    1. Join the competition (https://zindi.africa/competitions/specializing-large-language-models-for-telecom-networks)
    2. Download competition data and copy it to data/ directory inside your cloned repository
+   3. Extract rel18 folder from rel18.rar
 5. [Optional] Run vectore_store_for_rag.py
     * It is possible to run model without using RAG (by changing PERFORM_RAG to False in main.py)
     * This RAG implementation uses rel18/ documents from the competition
