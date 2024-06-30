@@ -75,7 +75,7 @@ if PERFORM_RAG:
                                      similarity_top_k=top_k)
     # Assemble query engine
     query_engine = RetrieverQueryEngine(retriever=retriever,
-                                        node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.6)])
+                                        node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.5)])
     if DO_TRAIN_INFERENCE:
         # Train data inference
         results_train, _ = llm_inference(train, model, tokenizer, PERFORM_RAG, query_engine, top_k)
