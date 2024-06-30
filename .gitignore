@@ -7,6 +7,10 @@
 *.txt
 !requirements.txt
 
+#Folders
+results
+
+
 #Python
 *.pyc
 .idea
