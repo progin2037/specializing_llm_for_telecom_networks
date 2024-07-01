@@ -56,7 +56,7 @@ train['answer'] = train.Answer_letter + ')' + train.answer.str[9:]
 train = remove_release_number(train, 'question')
 if USE_RAG:
     context_all_train = pd.read_pickle('results/context_all_train.pkl')
-    train['Context_1'] = context_all_train['Context_1']  ## add more Context_x columns if using many chunks
+    train['Context_1'] = context_all_train['Context_1']  # add more Context_x columns if using many chunks
     # Generate prompts with context and answers
     train['text'] = train.apply(lambda x: generate_prompt(x, 'Context:\n' + x['Context_1'] + '\n') + x['answer'], axis=1)
 else:

@@ -66,13 +66,24 @@ def encode_answer(answer: str | int,
     return encoded
 
 
-def rag(row,
-        query_eng,
-        top_k):
+def rag(row: pd.Series,
+        query_eng: RetrieverQueryEngine,
+        top_k: int) -> str:
+    """
+    Perform RAG inference on the selected question.
+
+    Args:
+        row (pd.Series): A row with question and options to choose from. Options aren't used in RAG
+        query_eng (RetrieverQueryEngine): RAG query engine
+        top_k (int): Number of chunks in context from RAG
+    Returns:
+        context (str): Output from RAG (empty if no RAG used)
+    """
     # Query documents
     query = row['question']
     response = query_eng.query(query)
     context = 'Context:\n'
+    # Iterate over different chunks
     for i in range(top_k):
         try:
             context = context + response.source_nodes[i].text + '\n'
@@ -157,15 +168,16 @@ def llm_inference(data: pd.DataFrame,
             answer = encode_answer(answer_letter)
         except:
             try:
-                print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Checking if it wasn't\
-because of spaces...")
+                print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Checking if it \
+wasn't because of spaces...")
+                # Get some more output
                 outputs = model.generate(**inputs, max_length=inputs[0].__len__()+4, pad_token_id=tokenizer.eos_token_id)
                 print(f'Full output:\n{tokenizer.batch_decode(outputs)[0]}')
                 answer_letter = tokenizer.batch_decode(outputs)[0][len(prompt)-5:len(prompt)+5]
-                print(f'New answer: {answer_letter}')
+                # Find answer in the generated output
                 answer_letter = re.findall('(A|B|C|D|E)\)', answer_letter)[0]
                 answer = encode_answer(answer_letter)
-                print(f'Changed answer to {answer}')
+                print(f'New answer: {answer}')
             except:
                 print(f"Question {question['Question_ID']} output was improper ({answer_letter})! Changing answer to 1")
                 answer = 1

@@ -68,9 +68,9 @@ if PERFORM_RAG:
     # load index from stored vectors
     index = VectorStoreIndex.from_vector_store(vector_store,
                                                storage_context=storage_context)
-    # set number of chunks to retrieve
+    # Set number of chunks to retrieve
     top_k = 1
-    # configure retriever
+    # Configure retriever
     retriever = VectorIndexRetriever(index=index,
                                      similarity_top_k=top_k)
     # Assemble query engine

@@ -42,6 +42,7 @@ def rag_inference_on_train(data: pd.DataFrame,
             print(f'\nAnswer:\n{answer}')
     # Convert to DataFrame and save data
     context_all_train_df = pd.DataFrame(context_all_train, columns=['Question', 'Context_1', 'Answer'])
+    # Save to .csv for own examination and to .pkl to load in the further processing
     context_all_train_df.to_csv('results/context_all_train.csv', index=False)
     context_all_train_df.to_pickle('results/context_all_train.pkl')
 
